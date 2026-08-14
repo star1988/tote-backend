@@ -79,15 +79,7 @@ def update_product(product_id: int, updated: Product, session: Session = Depends
     session.refresh(product)
     return product
 
-# --- Delete a product ---
-@app.delete("/products/{product_id}")
-def delete_product(product_id: int, session: Session = Depends(get_session)):
-    product = session.get(Product, product_id)
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    session.delete(product)
-    session.commit()
-    return {"message": "Product deleted"}
+
 # --- Create an order (with stock check) ---
 @app.post("/orders/")
 def create_order(order: Order, session: Session = Depends(get_session)):
