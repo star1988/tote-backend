@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from sqlmodel import SQLModel, Field, create_engine
 from typing import Optional
+from sqlmodel import Session, select
+from fastapi import HTTPException
+
 
 # Database setup
 sqlite_file_name = "database.db"
@@ -35,3 +38,53 @@ def on_startup():
 @app.get("/")
 def read_root():
     return {"message": "Tote and Trend API is running"}
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+# --- Create a product ---
+@app.post("/products/")
+def create_product(product: Product, session: Session = Depends(get_session)):
+    session.add(product)
+    session.commit()
+    session.refresh(product)
+    return product
+
+# --- Get all products ---
+@app.get("/products/")
+def read_products(session: Session = Depends(get_session)):
+    products = session.exec(select(Product)).all()
+    return products
+
+# --- Get one product by ID ---
+@app.get("/products/{product_id}")
+def read_product(product_id: int, session: Session = Depends(get_session)):
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+# --- Update a product ---
+@app.put("/products/{product_id}")
+def update_product(product_id: int, updated: Product, session: Session = Depends(get_session)):
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    product.name = updated.name
+    product.price = updated.price
+    product.stock = updated.stock
+    product.category = updated.category
+    session.add(product)
+    session.commit()
+    session.refresh(product)
+    return product
+
+# --- Delete a product ---
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int, session: Session = Depends(get_session)):
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    session.delete(product)
+    session.commit()
+    return {"message": "Product deleted"}
