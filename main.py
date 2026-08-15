@@ -1,3 +1,9 @@
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+SECRET_KEY = os.getenv("ThisIsAVerySecretKey")
+
 from fastapi import FastAPI, Depends, HTTPException
 from sqlmodel import SQLModel, Field, create_engine
 from typing import Optional
@@ -9,17 +15,17 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 # --- Auth setup ---
-SECRET_KEY = "change-this-to-a-random-secret-later"  # temporary, more on this below
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# Temporary hardcoded admin — real user storage comes later
+
 FAKE_ADMIN = {
     "username": "admin",
-    "hashed_password": pwd_context.hash("changeme123")  # temporary password
+    "hashed_password": pwd_context.hash(os.getenv("ADMIN_PASSWORD"))
 }
 
 def create_access_token(data: dict):
