@@ -51,10 +51,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 
 # Database setup
-sqlite_file_name = "database.db"
+database_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
+engine = create_engine(database_url, echo=True)
+print("DATABASE_URL loaded:", database_url)
+"""sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 engine = create_engine(sqlite_url, echo=True)
-
+"""
 # --- Models ---
 
 class Product(SQLModel, table=True):
