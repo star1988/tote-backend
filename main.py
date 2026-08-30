@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
-SECRET_KEY = os.getenv("ThisIsAVerySecretKey")
+
 
 from fastapi import FastAPI, Depends, HTTPException
 from sqlmodel import SQLModel, Field, create_engine
@@ -54,10 +54,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 database_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
 engine = create_engine(database_url, echo=True)
 print("DATABASE_URL loaded:", database_url)
-"""sqlite_file_name = "database.db"
-sqlite_url = f"sqlite:///{sqlite_file_name}"
-engine = create_engine(sqlite_url, echo=True)
-"""
+
 # --- Models ---
 
 class Product(SQLModel, table=True):
@@ -99,6 +96,16 @@ def read_root():
 def get_session():
     with Session(engine) as session:
         yield session
+
+# --- Search products ---
+@app.get("/products/search")
+def search_products(q: str, session: Session = Depends(get_session)):
+    results = session.exec(
+        select(Product).where(
+            (Product.name.ilike(f"%{q}%")) | (Product.category.ilike(f"%{q}%"))
+        )
+    ).all()
+    return results
 
 # --- Create a product ---
 @app.post("/products/")
