@@ -23,10 +23,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
-FAKE_ADMIN = {
-    "username": "admin",
-    "hashed_password": pwd_context.hash(os.getenv("ADMIN_PASSWORD"))
-}
+
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -53,7 +50,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 # Database setup
 database_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
 engine = create_engine(database_url, echo=True)
-print("DATABASE_URL loaded:", database_url)
+#print("DATABASE_URL loaded:", database_url)
 
 # --- Models ---
 
@@ -66,24 +63,33 @@ class Product(SQLModel, table=True):
 
 class Order(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id")
     product_id: int = Field(foreign_key="product.id")
     quantity: int
-    customer_name: str
     status: str = "pending"
+
+
+
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
+def get_session():
+    with Session(engine) as session:
+        yield session
+
 app = FastAPI()
 
+
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.username != FAKE_ADMIN["username"] or not pwd_context.verify(
-        form_data.password, FAKE_ADMIN["hashed_password"]
-    ):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
+    user = session.exec(
+        select(User).where(User.username == form_data.username)
+        ).first()
+
+    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    
-    access_token = create_access_token(data={"sub": form_data.username})
+    access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.on_event("startup")
@@ -93,9 +99,15 @@ def on_startup():
 @app.get("/")
 def read_root():
     return {"message": "Tote and Trend API is running"}
-def get_session():
-    with Session(engine) as session:
-        yield session
+
+'''
+# --- Multiple Users ---
+@app.post("/users")
+def create_user(user: User, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user'''
 
 # --- Search products ---
 @app.get("/products/search")
@@ -217,3 +229,28 @@ def delete_product(product_id: int, session: Session = Depends(get_session), cur
     session.delete(product)
     session.commit()
     return {"message": "Product deleted"}
+
+
+class UserBase(SQLModel):
+    username: str = Field(unique = True, index = True)
+    email: str = Field(unique = True, index = True)
+
+class User(UserBase, table = True):
+    id: Optional[int] = Field(default = None, primary_key = True)
+    hashed_password: str 
+
+class UserCreate(UserBase):
+    password: str
+
+class UserPublic(UserBase):
+    id : int
+    
+@app.post("/users", response_model=UserPublic)     
+def create_user(user_create : UserCreate, session: Session = Depends(get_session)):
+    db_user = User(username = user_create.username,
+               email = user_create.email,
+               hashed_password = pwd_context.hash(user_create.password))
+    session.add(db_user)
+    session.commit()
+    session.refresh(db_user)
+    return db_user
