@@ -8,7 +8,6 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlmodel import SQLModel, Field, create_engine
 from typing import Optional
 from sqlmodel import Session, select
-from fastapi import HTTPException
 from datetime import datetime, timedelta
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -47,6 +46,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     return username
 
 
+
+
 # Database setup
 database_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
 engine = create_engine(database_url, echo=True)
@@ -68,6 +69,11 @@ class Order(SQLModel, table=True):
     quantity: int
     status: str = "pending"
 
+class OrderCreate(SQLModel):
+    product_id: int
+    quantity: int = Field(gt=0)
+    status: str
+
 
 
 
@@ -77,6 +83,8 @@ def create_db_and_tables():
 def get_session():
     with Session(engine) as session:
         yield session
+
+
 
 app = FastAPI()
 
@@ -92,9 +100,21 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
+def get_current_db_user(username: str = Depends(get_current_user),
+                        session: Session = Depends(get_session)):
+    user = session.exec(
+            select(User).where(User.username == username)
+            ).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+
+
 
 @app.get("/")
 def read_root():
@@ -159,47 +179,58 @@ def update_product(product_id: int, updated: Product, session: Session = Depends
 
 # --- Create an order (with stock check) ---
 @app.post("/orders/")
-def create_order(order: Order, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
-    product = session.get(Product, order.product_id)
+def create_order(order_in: OrderCreate, 
+                session: Session = Depends(get_session),
+                current_user: User = Depends(get_current_db_user)):
+    product = session.get(Product, order_in.product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    
-    if product.stock < order.quantity:
+    if product.stock < order_in.quantity:
         raise HTTPException(
             status_code=400,
-            detail=f"Not enough stock. Available: {product.stock}, requested: {order.quantity}"
+            detail=f"Not enough stock. Available: {product.stock}, requested: {order_in.quantity}"
         )
     
-    product.stock -= order.quantity
+    product.stock -= order_in.quantity
     session.add(product)
-    
-    order.status = "confirmed"
-    session.add(order)
+
+    db_order = Order(
+        user_id=current_user.id,
+        product_id=order_in.product_id,
+        quantity=order_in.quantity,
+        status="confirmed"
+    )
+    session.add(db_order)
     session.commit()
-    session.refresh(order)
-    return order
+    session.refresh(db_order)
+    return db_order
 
 # --- Get all orders ---
 @app.get("/orders/")
-def read_orders(session: Session = Depends(get_session)):
-    orders = session.exec(select(Order)).all()
+def read_orders(session: Session = Depends(get_session),
+                current_user: User = Depends(get_current_db_user)):
+    orders = session.exec(
+        select(Order).where(Order.user_id == current_user.id)).all()
     return orders
 
 # --- Get one order by ID ---
 @app.get("/orders/{order_id}")
-def read_order(order_id: int, session: Session = Depends(get_session)):
+def read_order(order_id: int, session: Session = Depends(get_session),
+               current_user: User = Depends(get_current_db_user)):
     order = session.get(Order, order_id)
-    if not order:
+    if not order or order.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
 # --- Cancel an order (and restore stock) ---
 @app.delete("/orders/{order_id}")
-def cancel_order(order_id: int, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
+def cancel_order(order_id: int, session: Session = Depends(get_session),
+                 current_user: User = Depends(get_current_db_user)):
     order = session.get(Order, order_id)
-    if not order:
+    if not order or order.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Order not found")
-    
+    if order.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Order already cancelled")
     product = session.get(Product, order.product_id)
     if product:
         product.stock += order.quantity
@@ -212,7 +243,8 @@ def cancel_order(order_id: int, session: Session = Depends(get_session), current
 
 # --- Delete a product ---
 @app.delete("/products/{product_id}")
-def delete_product(product_id: int, session: Session = Depends(get_session), current_user: str = Depends(get_current_user)):
+def delete_product(product_id: int, session: Session = Depends(get_session),
+                   current_user: str = Depends(get_current_user)):
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -243,7 +275,8 @@ class UserCreate(UserBase):
     password: str
 
 class UserPublic(UserBase):
-    id : int
+    id: int
+
     
 @app.post("/users", response_model=UserPublic)     
 def create_user(user_create : UserCreate, session: Session = Depends(get_session)):
@@ -254,3 +287,6 @@ def create_user(user_create : UserCreate, session: Session = Depends(get_session
     session.commit()
     session.refresh(db_user)
     return db_user
+
+
+
